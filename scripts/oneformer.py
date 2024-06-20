@@ -141,11 +141,14 @@ def oneformer_cityscapes_segmentation(image, oneformer_cityscapes_processor, one
             #print(outputs.masks_queries_logits)
             #print(outputs.masks_queries_logits.shape)
             #outputs = model(image)
-            label_logits = F.interpolate(outputs.masks_queries_logits.unsqueeze(0), size=(h, w), mode='bilinear', align_corners=True)
-            intermediate_logits = F.interpolate(outputs.transformer_decoder_mask_predictions.unsqueeze(0), size=(h, w), mode='bilinear', align_corners=True)
+
+            label_logits = F.interpolate(outputs.masks_queries_logits, size=(h, w), mode='bilinear', align_corners=True)
+            intermediate_logits = F.interpolate(outputs.transformer_decoder_mask_predictions, size=(h, w), mode='bilinear', align_corners=True)
             #label_tensor = torch.tensor(label_matrix, dtype=torch.long).unsqueeze(0).to(rank) # 添加批量维度
             #print(label_tensor.shape)
             #print(intermediate_logits.shape)
+            # 确保 label_logits 是 Long 类型
+            label_logits = label_logits.long()
             loss = criterion(intermediate_logits, label_logits)
         #data_grad = torch.autograd.grad(loss, inputs['pixel_values'], allow_unused=True, retain_graph=False, create_graph=False
         #                            )[0]
