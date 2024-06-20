@@ -69,7 +69,7 @@ def fgsm_attack(image, epsilon, data_grad):
     sign_data_grad = resized_data_grad.sign()
     #print(sign_data_grad)
     #print(epsilon)
-    #print(sign_data_grad)
+    print(sign_data_grad)
     #print(resized_data_grad.shape)
     #print(image)
     #对输入图像添加扰动
@@ -148,7 +148,7 @@ def oneformer_cityscapes_segmentation(image, oneformer_cityscapes_processor, one
             #print(label_tensor.shape)
             #print(intermediate_logits.shape)
             # 确保 label_logits 是 Long 类型
-            label_logits = label_logits.long()
+            label_logits = label_logits.argmax(dim=1).long()
             loss = criterion(intermediate_logits, label_logits)
         #data_grad = torch.autograd.grad(loss, inputs['pixel_values'], allow_unused=True, retain_graph=False, create_graph=False
         #                            )[0]
