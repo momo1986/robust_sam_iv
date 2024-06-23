@@ -101,7 +101,7 @@ def oneformer_cityscapes_segmentation(image, oneformer_cityscapes_processor, one
     #print(image_array.shape)
     h, w, _ = image_array.shape
     original_input = image_array
-    epsilon = 16.0
+    epsilon = 8.0
     #print(image_array)
     optimizer = optim.SGD(oneformer_cityscapes_model.parameters(), lr=0.001, momentum=0.9)
     '''
