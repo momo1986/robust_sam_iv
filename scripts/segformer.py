@@ -3,6 +3,10 @@ import torch.nn.functional as F
 import torch.nn as nn
 import torch.optim as optim
 import numpy as np
+import gc
+import segpgd
+#global fig_index
+#fig_index = 0
 criterion = nn.CrossEntropyLoss()
 class_mapping = {
     "road": 0,
@@ -64,14 +68,15 @@ def fgsm_attack(image, epsilon, data_grad):
     perturbed_image = torch.clamp(perturbed_image, 0, 255).to(torch.int)
     return perturbed_image
 
-
+import matplotlib.pyplot as plt
 def segformer_segmentation(image, processor, model, rank, anns):
     h, w, _ = image.shape
     #print(h)
     #print(w)
     original_input = image
-    epsilon = 4
-
+    epsilon = 8
+    iters = 20
+    alpha = 2
     optimizer = optim.SGD(model.parameters(), lr=0.001, momentum=0.9)
 
     #print(inputs)
@@ -106,18 +111,32 @@ def segformer_segmentation(image, processor, model, rank, anns):
     #image.requires_grad = True 
     #print(inputs)
     #inputs['pixel_values'] = torch.tensor(inputs['pixel_values'], requires_grad=True)
-    inputs['pixel_values']=inputs['pixel_values'].clone().detach().requires_grad_(True)
     with torch.enable_grad():
-        outputs = model(**inputs)
-        #outputs = model(image)
-        intermediate_logits = F.interpolate(outputs.logits, size=(h, w), mode='bilinear', align_corners=True)
+        for i in range(iters):
+            gc.collect()
+            torch.cuda.empty_cache()
+            inputs['pixel_values']=inputs['pixel_values'].clone().detach().requires_grad_(True)
+ 
+            outputs = model(**inputs)
+            #outputs = model(image)
+            intermediate_logits = F.interpolate(outputs.logits, size=(h, w), mode='bilinear', align_corners=True)
     
-        label_tensor = torch.tensor(label_matrix, dtype=torch.long).unsqueeze(0).to(rank) # 添加批量维度
-        loss = criterion(torch.softmax(intermediate_logits, dim=1), label_tensor)
+            label_tensor = torch.tensor(label_matrix, dtype=torch.long).unsqueeze(0).to(rank) # 添加批量维度
+            loss = criterion(torch.softmax(intermediate_logits, dim=1), label_tensor)
         #data_grad = torch.autograd.grad(loss, inputs['pixel_values'], allow_unused=True, retain_graph=False, create_graph=False
         #                            )[0]
-        loss.backward()
-    #import ipdb;ipdb.set_trace()
+            loss.backward()
+            data_grad = inputs['pixel_values'].grad
+            resized_data_grad = F.interpolate(data_grad, size=(image.size(0), image.size(1)), mode='nearest')
+            resized_data_grad = resized_data_grad.permute(0, 2, 3, 1).squeeze()
+            adv_image = image + alpha * resized_data_grad.sign()
+            eta = torch.clamp(adv_image - image, min=-epsilon, max=epsilon)
+            image = torch.clamp(image + eta, min=0, max=255).detach_()
+            #image.requires_grad = True
+            image = torch.tensor(image, requires_grad=True).to(rank)
+            inputs = processor(images=image.unsqueeze(0), return_tensors="pt").to(rank)
+
+        #import ipdb;ipdb.set_trace()
         #data_grad = torch.autograd.grad(loss, image, retain_graph=False, create_graph=False)[0]
         #optimizer.zero_grad()
         #loss.backward()
@@ -130,12 +149,19 @@ def segformer_segmentation(image, processor, model, rank, anns):
     # 启用梯度跟踪
     #torch.enable_grad()
     #data_grad = image.grad.data
-    data_grad = inputs['pixel_values'].grad
-    perturbed_image = fgsm_attack(image, epsilon, data_grad)
-    inputs = processor(images=perturbed_image, return_tensors="pt").to(rank)
+    #perturbed_image = fgsm_attack(image, epsilon, data_grad)
+    #inputs = processor(images=perturbed_image, return_tensors="pt").to(rank)
     #print(inputs)
     outputs = model(**inputs)
- 
+    #print(image.shape)
+    #print(type(image))
+    #imgplot = plt.imshow(np.transpose(inputs['pixel_values'].cpu().numpy().squeeze(0), (1, 2, 0)))
+    #imgplot =plt.imshow(image.cpu().numpy().astype(np.uint8))
+    #plt.show()
+    #global fig_index
+    #fig_index = fig_index + 1
+    #fig_name = str(fig_index) + ".pdf"
+    #plt.savefig(fig_name)
     logits = outputs.logits
     logits = F.interpolate(logits, size=(h, w), mode='bilinear', align_corners=True)
     predicted_semantic_map = logits.argmax(dim=1).squeeze(0)
