@@ -102,6 +102,8 @@ def oneformer_cityscapes_segmentation(image, oneformer_cityscapes_processor, one
     h, w, _ = image_array.shape
     original_input = image_array
     epsilon = 8.0
+    iters = 10
+    alpha = 2
     #print(image_array)
     optimizer = optim.SGD(oneformer_cityscapes_model.parameters(), lr=0.001, momentum=0.9)
     '''
@@ -132,27 +134,38 @@ def oneformer_cityscapes_segmentation(image, oneformer_cityscapes_processor, one
         gc.collect()
         torch.cuda.empty_cache()
         with autocast():
-            outputs =  oneformer_cityscapes_model(**inputs)
-            #print(label_matrix)
-            #print(label_matrix.shape)
-            #print(outputs)
-            #print(outputs.class_queries_logits)
-            #print(outputs.class_queries_logits.shape)
-            #print(outputs.masks_queries_logits)
-            #print(outputs.masks_queries_logits.shape)
-            #outputs = model(image)
+            for i in range(iters):
+                outputs =  oneformer_cityscapes_model(**inputs)
+                #print(label_matrix)
+                #print(label_matrix.shape)
+                #print(outputs)
+                #print(outputs.class_queries_logits)
+                #print(outputs.class_queries_logits.shape)
+                #print(outputs.masks_queries_logits)
+                #print(outputs.masks_queries_logits.shape)
+                #outputs = model(image)
 
-            label_logits = F.interpolate(outputs.masks_queries_logits, size=(h, w), mode='bilinear', align_corners=True)
-            intermediate_logits = F.interpolate(outputs.transformer_decoder_mask_predictions, size=(h, w), mode='bilinear', align_corners=True)
-            #label_tensor = torch.tensor(label_matrix, dtype=torch.long).unsqueeze(0).to(rank) # 添加批量维度
-            #print(label_tensor.shape)
-            #print(intermediate_logits.shape)
-            # 确保 label_logits 是 Long 类型
-            label_logits = label_logits.argmax(dim=1).long()
-            loss = criterion(intermediate_logits, label_logits)
-        #data_grad = torch.autograd.grad(loss, inputs['pixel_values'], allow_unused=True, retain_graph=False, create_graph=False
-        #                            )[0]
-        scaler.scale(loss).backward()
+                label_logits = F.interpolate(outputs.masks_queries_logits, size=(h, w), mode='bilinear', align_corners=True)
+                intermediate_logits = F.interpolate(outputs.transformer_decoder_mask_predictions, size=(h, w), mode='bilinear', align_corners=True)
+                #label_tensor = torch.tensor(label_matrix, dtype=torch.long).unsqueeze(0).to(rank) # 添加批量维度
+                #print(label_tensor.shape)
+                #print(intermediate_logits.shape)
+                # 确保 label_logits 是 Long 类型
+                label_logits = label_logits.argmax(dim=1).long()
+                loss = criterion(intermediate_logits, label_logits)
+                #data_grad = torch.autograd.grad(loss, inputs['pixel_values'], allow_unused=True, retain_graph=False, create_graph=False
+                scaler.scale(loss).backward()
+                data_grad = inputs['pixel_values'].grad
+
+                resized_data_grad = F.interpolate(data_grad, size=(image_array.shape[0], image_array.shape[1]), mode='nearest')
+                resized_data_grad = resized_data_grad.permute(0, 2, 3, 1).squeeze()
+                adv_image = image_array + alpha * resized_data_grad.sign()
+                eta = torch.clamp(adv_image - image_array, min=-epsilon, max=epsilon)
+                perturbed_image = torch.clamp(image_array + eta, min=0, max=255).detach_()
+                #image.requires_grad = True
+                inputs = oneformer_cityscapes_processor(images=pertubed_image, task_inputs=["semantic"], return_tensors="pt").to(rank)
+                inputs['pixel_values']=inputs['pixel_values'].clone().detach().requires_grad_(True)
+ 
         del outputs
         del intermediate_logits
         del loss
@@ -171,9 +184,9 @@ def oneformer_cityscapes_segmentation(image, oneformer_cityscapes_processor, one
     # 启用梯度跟踪
     #torch.enable_grad()
     #data_grad = image.grad.data
-    data_grad = inputs['pixel_values'].grad
+    #data_grad = inputs['pixel_values'].grad
     #print(data_grad)
-    perturbed_image = fgsm_attack(image_array, epsilon, data_grad)
+    #perturbed_image = fgsm_attack(image_array, epsilon, data_grad)
     inputs = oneformer_cityscapes_processor(images=perturbed_image, task_inputs=["semantic"], return_tensors="pt").to(rank)
     outputs = oneformer_cityscapes_model(**inputs)
     predicted_semantic_map = oneformer_cityscapes_processor.post_process_semantic_segmentation(
