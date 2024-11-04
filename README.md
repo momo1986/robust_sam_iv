@@ -13,3 +13,4 @@ Run on black-box attacks, please comment the code related to the white-box attac
 pip install https://github.com/bethgelab/imagecorruptions
 ```
 
+Our up-to-date demo is the pipeline under the PGD attacks.
